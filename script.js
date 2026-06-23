@@ -1,11 +1,11 @@
-// ─── Tokenomics constants ───────────────────────────────────────────────────
+// ─── Tokenomics constants (display / preview only — settlement runs on server) ─
 const INITIAL_MIN_BID = 10;
 const POOL_SHARE = 0.70;
 const KING_REWARD_SHARE = 0.20;
 const DEV_COMMISSION_SHARE = 0.10;
-const FAILED_BID_KING_SHARE = 0.05; // 5% of failed/low bids go to current King
+const FAILED_BID_KING_SHARE = 0.05;
 
-// ─── App state ──────────────────────────────────────────────────────────────
+// ─── App state (hydrated from Supabase via /api/state) ──────────────────────
 let king = null;
 let accumulatedPool = 0;
 let totalVolume = 0;
@@ -46,50 +46,10 @@ const podiumSlots = [
 ];
 const podiumRanks = [1, 0, 2];
 
-// ═══════════════════════════════════════════════════════════════════════════
-// BACKEND API STUBS — Replace with real fetch/axios calls when server is ready
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * POST /api/pool/update
- * Sends the pool share to the on-chain / server-side accumulated pool.
- */
-async function updatePool(amount) {
-  // TODO: await fetch('/api/pool/update', { method: 'POST', body: JSON.stringify({ amount }) })
-  await simulateNetworkDelay();
-  accumulatedPool = formatPrice(accumulatedPool + amount);
-  return { success: true, newPoolTotal: accumulatedPool };
-}
-
-/**
- * POST /api/payments/pay-to-user
- * Transfers Test-Pi reward to a pioneer (dethroned King or failed-bid yield).
- */
-async function payToUser(username, amount, reason) {
-  // TODO: await fetch('/api/payments/pay-to-user', { method: 'POST', body: JSON.stringify({ username, amount, reason }) })
-  await simulateNetworkDelay();
-  return { success: true, username, amount, reason };
-}
-
-/**
- * POST /api/payments/platform-fee
- * Records and routes the 10% platform fee.
- */
-async function recordDevCommission(amount) {
-  // TODO: await fetch('/api/payments/dev-commission', { method: 'POST', body: JSON.stringify({ amount }) })
-  await simulateNetworkDelay();
-  developerCommission = formatPrice(developerCommission + amount);
-  return { success: true, totalCommission: developerCommission };
-}
-
-function simulateNetworkDelay(ms = 300) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function formatPrice(n) {
-  return Number.isInteger(n) ? n : parseFloat(n.toFixed(2));
+  return Number.isInteger(n) ? n : parseFloat(Number(n).toFixed(2));
 }
 
 function splitPayment(amount) {
@@ -108,21 +68,56 @@ function getInitials(name) {
   return name.slice(0, 2).toUpperCase();
 }
 
-function getPioneerKey(name) {
-  return name.toLowerCase();
-}
-
-function getOrCreatePioneer(name, message) {
-  const key = getPioneerKey(name);
-  if (!pioneers.has(key)) {
-    pioneers.set(key, { name, message, totalPaid: 0, claims: 0, throneEarnings: 0 });
-  }
-  return pioneers.get(key);
-}
-
 function getRankedPioneers() {
   return [...pioneers.values()].sort((a, b) => b.totalPaid - a.totalPaid);
 }
+
+// ─── Supabase sync via Vercel API ───────────────────────────────────────────
+
+async function loadGameState() {
+  console.log('[GameState] loading from /api/state');
+  const response = await fetch('/api/state');
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error || `Failed to load state (${response.status})`);
+  }
+
+  const { throne, pioneers: pioneerList } = data;
+
+  accumulatedPool = formatPrice(throne.pool_total);
+  totalVolume = formatPrice(throne.total_volume);
+  totalKingRewardsPaid = formatPrice(throne.king_rewards_paid);
+  developerCommission = formatPrice(throne.platform_fee);
+
+  pioneers.clear();
+  pioneerList.forEach((p) => {
+    pioneers.set(p.name.toLowerCase(), {
+      name: p.name,
+      message: p.message || '',
+      totalPaid: formatPrice(p.total_paid),
+      throneEarnings: formatPrice(p.throne_earnings),
+      claims: p.claims || 0,
+    });
+  });
+
+  if (throne.current_king) {
+    king = {
+      name: throne.current_king,
+      message: throne.king_message || '',
+      paid: formatPrice(throne.current_bid),
+      sessionThroneEarnings: 0,
+    };
+  } else {
+    king = null;
+  }
+
+  console.log('[GameState] loaded', { king: king?.name, pool: accumulatedPool, pioneers: pioneers.size });
+  renderAll();
+  return data;
+}
+
+window.GameState = { refresh: loadGameState };
 
 // ─── UI updates ─────────────────────────────────────────────────────────────
 
@@ -155,6 +150,9 @@ function updateBidPreview() {
 
 function updateKingDisplay() {
   if (!king) {
+    kingNameEl.textContent = '—';
+    kingMessageEl.textContent = 'Be the first to conquer the wall.';
+    kingMetaEl.classList.add('hidden');
     kingThroneEarningsEl.classList.add('hidden');
     return;
   }
@@ -163,26 +161,23 @@ function updateKingDisplay() {
   kingMessageEl.textContent = `"${king.message}"`;
   kingPaidEl.textContent = formatPrice(king.paid);
   kingMetaEl.classList.remove('hidden');
-
   kingThroneAmountEl.textContent = formatPrice(king.sessionThroneEarnings || 0);
   kingThroneEarningsEl.classList.remove('hidden');
 }
 
 function showBidError(min, isFailedBid = false) {
   if (isFailedBid && king) {
-    bidErrorText.textContent = `Bid too low — minimum is ${formatPrice(min)} Test-Pi. The King earns yield from failed bids.`;
+    bidErrorText.textContent = `Bid too low — minimum is ${formatPrice(min)} Test-Pi.`;
   } else {
     bidErrorText.textContent = `Minimum bid is ${formatPrice(min)} Test-Pi`;
   }
   bidError.classList.remove('hidden');
   bidInput.classList.add('border-red-500/60', 'ring-2', 'ring-red-500/20');
-  bidInput.classList.remove('border-purple-500/30');
 }
 
 function hideBidError() {
   bidError.classList.add('hidden');
   bidInput.classList.remove('border-red-500/60', 'ring-2', 'ring-red-500/20');
-  bidInput.classList.add('border-purple-500/30');
 }
 
 function updatePodiumSlot(slotEl, pioneer) {
@@ -194,7 +189,6 @@ function updatePodiumSlot(slotEl, pioneer) {
     avatar.textContent = '?';
     nameEl.textContent = '—';
     amountEl.textContent = '0 π';
-    avatar.title = '';
     return;
   }
 
@@ -226,15 +220,12 @@ function renderFullLeaderboard() {
 
     return `
       <tr class="border-b border-purple-500/10 ${rank <= 3 ? 'bg-pi-purple/5' : ''} hover:bg-pi-purple/10 transition-colors">
-        <td class="py-3.5 pr-4 font-bold ${rank === 1 ? 'text-pi-gold' : rank === 2 ? 'text-gray-300' : rank === 3 ? 'text-orange-400' : 'text-purple-400'}">${medal}</td>
+        <td class="py-3.5 pr-4 font-bold">${medal}</td>
         <td class="py-3.5 pr-4">
-          <div class="flex items-center gap-2">
-            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-pi-purple to-pi-purple-dark flex items-center justify-center text-xs font-bold shrink-0">${getInitials(p.name)}</div>
-            <span class="font-semibold text-white">${p.name}${isKing ? ' <span class="text-pi-gold text-xs">👑</span>' : ''}</span>
-            ${p.claims > 1 ? `<span class="text-purple-500 text-xs">(${p.claims} bids)</span>` : ''}
-          </div>
+          <span class="font-semibold text-white">${p.name}${isKing ? ' 👑' : ''}</span>
+          ${p.claims > 1 ? `<span class="text-purple-500 text-xs">(${p.claims})</span>` : ''}
         </td>
-        <td class="py-3.5 pr-4 text-purple-300/70 hidden sm:table-cell max-w-[200px] truncate">"${p.message}"</td>
+        <td class="py-3.5 pr-4 text-purple-300/70 hidden sm:table-cell truncate">"${p.message}"</td>
         <td class="py-3.5 pr-4 text-right font-bold text-pi-gold">${formatPrice(p.totalPaid)} π</td>
         <td class="py-3.5 text-right font-bold text-green-400 hidden sm:table-cell">${formatPrice(p.throneEarnings)} π</td>
       </tr>
@@ -256,96 +247,6 @@ function renderAll() {
   updateKingDisplay();
   renderPodium();
   renderFullLeaderboard();
-}
-
-// ─── Core tokenomics flow ───────────────────────────────────────────────────
-
-/**
- * Handles a failed / below-minimum bid.
- * Current King earns a small yield from the attempt.
- */
-async function processFailedBid(attemptedBid) {
-  if (!king || attemptedBid <= 0) return;
-
-  const kingTip = formatPrice(attemptedBid * FAILED_BID_KING_SHARE);
-  if (kingTip <= 0) return;
-
-  // TODO: Backend will validate and transfer the failed-bid yield
-  await payToUser(king.name, kingTip, 'failed_bid_yield');
-
-  king.sessionThroneEarnings = formatPrice((king.sessionThroneEarnings || 0) + kingTip);
-
-  const pioneer = getOrCreatePioneer(king.name, king.message);
-  pioneer.throneEarnings = formatPrice(pioneer.throneEarnings + kingTip);
-  totalKingRewardsPaid = formatPrice(totalKingRewardsPaid + kingTip);
-
-  addActivityEntry(`
-    <div class="flex justify-between items-start gap-3">
-      <div>
-        <span class="text-red-400 font-semibold">Failed bid</span>
-        <span class="text-purple-400 ml-2">${formatPrice(attemptedBid)} π too low</span>
-      </div>
-      <span class="text-green-400 font-medium shrink-0">+${kingTip} π → 👑 ${king.name}</span>
-    </div>
-  `);
-
-  renderAll();
-}
-
-/**
- * Processes a successful throne claim with full 70/20/10 tokenomics split.
- */
-async function processSuccessfulBid(name, message, paid) {
-  submitBtn.disabled = true;
-  submitBtn.textContent = 'Processing…';
-
-  const previousKing = king ? { ...king } : null;
-  const split = splitPayment(paid);
-
-  totalVolume = formatPrice(totalVolume + paid);
-
-  // 70% → Accumulated Pool
-  await updatePool(split.pool);
-
-  // 20% → Previous King dethronement reward
-  if (previousKing) {
-    await payToUser(previousKing.name, split.kingReward, 'dethronement_reward');
-    const prevPioneer = getOrCreatePioneer(previousKing.name, previousKing.message);
-    prevPioneer.throneEarnings = formatPrice(prevPioneer.throneEarnings + split.kingReward);
-    totalKingRewardsPaid = formatPrice(totalKingRewardsPaid + split.kingReward);
-  }
-
-  // 10% → Platform fee
-  await recordDevCommission(split.devCommission);
-
-  // Update pioneer contribution totals (full bid amount)
-  const pioneer = getOrCreatePioneer(name, message);
-  pioneer.totalPaid = formatPrice(pioneer.totalPaid + paid);
-  pioneer.message = message;
-  pioneer.claims += 1;
-
-  // New King takes the throne
-  king = { name, message, paid, sessionThroneEarnings: 0 };
-
-  addActivityEntry(`
-    <div class="space-y-1">
-      <div class="flex justify-between items-center">
-        <span class="font-semibold text-white">👑 ${name}</span>
-        <span class="text-pi-gold font-bold">${paid} π</span>
-      </div>
-      <p class="text-purple-400/70 truncate">"${message}"</p>
-      <div class="flex flex-wrap gap-3 text-xs mt-1">
-        <span class="text-pi-purple">Pool +${split.pool} π</span>
-        ${previousKing ? `<span class="text-green-400">Ex-King +${split.kingReward} π</span>` : ''}
-        <span class="text-pi-gold">Platform +${split.devCommission} π</span>
-      </div>
-    </div>
-  `);
-
-  renderAll();
-
-  submitBtn.disabled = false;
-  submitBtn.textContent = 'Claim Throne';
 }
 
 // ─── Event listeners ────────────────────────────────────────────────────────
@@ -373,20 +274,63 @@ form.addEventListener('submit', async (e) => {
 
   if (bid < minBid) {
     showBidError(minBid, true);
-    await processFailedBid(bid);
     return;
   }
 
   const paid = formatPrice(bid);
 
-  await processSuccessfulBid(name, message, paid);
+  try {
+    if (!window.PiPayments?.isReady()) {
+      await window.PiPayments.init();
+    }
+  } catch (err) {
+    window.PiPayments?.setStatus?.('error', err.message);
+    return;
+  }
 
-  document.getElementById('user-name').value = '';
-  document.getElementById('user-message').value = '';
-  bidInput.value = '';
-  bidPreview.classList.add('hidden');
+  if (!window.PiPayments.isReady()) {
+    window.PiPayments.setStatus('error', 'Pi SDK not ready. Open in Pi Browser.');
+    return;
+  }
 
-  document.getElementById('king-section').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Awaiting payment…';
+
+  try {
+    const result = await window.PiPayments.createPayment({
+      amount: paid,
+      memo: `Pioneer Wall throne — ${name}`,
+      metadata: { type: 'throne_claim', name, message, paid },
+    });
+
+    await loadGameState();
+
+    const settlement = result?.result?.settlement?.settlement;
+    if (settlement) {
+      addActivityEntry(`
+        <div class="space-y-1">
+          <span class="font-semibold text-white">👑 ${settlement.pioneerName}</span>
+          <span class="text-pi-gold font-bold ml-2">${settlement.bid} π</span>
+          <div class="text-xs text-purple-400">Pool +${settlement.poolAdded} π · Ex-King +${settlement.exKingReward} π</div>
+        </div>
+      `);
+    }
+
+    document.getElementById('user-name').value = '';
+    document.getElementById('user-message').value = '';
+    bidInput.value = '';
+    bidPreview.classList.add('hidden');
+    document.getElementById('king-section').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  } catch (error) {
+    if (error.message !== 'Payment cancelled by user') {
+      window.PiPayments.setStatus('error', error.message);
+    }
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = 'Claim Throne';
+  }
 });
 
-renderAll();
+loadGameState().catch((err) => {
+  console.error('[GameState] initial load failed:', err.message);
+});

@@ -1,0 +1,90 @@
+═══════════════════════════════════════════════════════════════
+  PIONEER WALL — Carpeta para subir a GitHub
+  Ubicación: C:\Users\alfon\Desktop\pi\subir-a-github
+═══════════════════════════════════════════════════════════════
+
+Esta carpeta tiene la estructura CORRECTA para Vercel.
+Sustituye todo lo que tienes en GitHub por esto.
+
+───────────────────────────────────────────────────────────────
+ESTRUCTURA (lo importante)
+───────────────────────────────────────────────────────────────
+
+subir-a-github/
+├── api/
+│   ├── state.js                 → https://tu-app.vercel.app/api/state
+│   └── payments/
+│       ├── approve.js
+│       └── complete.js
+├── lib/
+│   ├── supabase-server.js
+│   ├── pi-api.js
+│   └── throne-logic.js
+├── package.json                   ← OBLIGATORIO para Vercel
+├── vercel.json
+├── index.html
+├── script.js
+├── pi-payment.js
+└── (resto de archivos)
+
+───────────────────────────────────────────────────────────────
+OPCIÓN A — Subir con Git (recomendado)
+───────────────────────────────────────────────────────────────
+
+1. Abre PowerShell en esta carpeta:
+   cd C:\Users\alfon\Desktop\pi\subir-a-github
+
+2. Ejecuta:
+
+   git init
+   git add .
+   git commit -m "deploy completo con api y supabase"
+   git branch -M main
+   git remote add origin https://github.com/alfon98755/pioneer-wall.git
+   git push -u origin main --force
+
+   (Si dice que remote ya existe, usa:)
+   git remote set-url origin https://github.com/alfon98755/pioneer-wall.git
+   git push -u origin main --force
+
+3. Espera 1-2 min el deploy en Vercel.
+
+4. Prueba: https://pioneer-wall.vercel.app/api/state
+   → Debe mostrar JSON, NO 404.
+
+───────────────────────────────────────────────────────────────
+OPCIÓN B — Subir manual en GitHub.com
+───────────────────────────────────────────────────────────────
+
+1. Ve a github.com/alfon98755/pioneer-wall
+
+2. BORRA estos archivos de la raíz (están mal):
+   - approve.js
+   - complete.js
+
+3. Sube las carpetas completas:
+   - Arrastra la carpeta "api" entera
+   - Arrastra la carpeta "lib" entera
+   - Sube package.json y vercel.json
+
+4. Actualiza index.html, script.js, pi-payment.js si GitHub tiene versiones viejas.
+
+───────────────────────────────────────────────────────────────
+VERCEL — Variables de entorno (ya deberías tenerlas)
+───────────────────────────────────────────────────────────────
+
+SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY
+PI_API_KEY
+
+Después del push → Vercel → Deployments → Redeploy si hace falta.
+
+───────────────────────────────────────────────────────────────
+PRUEBA FINAL
+───────────────────────────────────────────────────────────────
+
+✅ https://pioneer-wall.vercel.app/api/state  → JSON
+✅ https://pioneer-wall.vercel.app              → App carga
+✅ Pi Browser → Pay 1 Test-Pi o Claim Throne
+
+═══════════════════════════════════════════════════════════════

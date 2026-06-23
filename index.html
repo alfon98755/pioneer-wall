@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Pi Pioneer Wall</title>
+  <script src="https://sdk.minepi.com/pi-sdk.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -115,6 +116,31 @@
       Bid Test-Pi, claim the throne, and earn yield. Every payment fuels the ecosystem.
     </p>
   </header>
+
+  <!-- Pi Payment — portal step 10 verification -->
+  <section class="relative z-10 max-w-4xl mx-auto px-4 mb-6">
+    <div class="glass rounded-2xl p-5 sm:p-6 border border-pi-purple/40">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <span class="w-8 h-8 rounded-full bg-pi-purple/30 flex items-center justify-center text-sm">π</span>
+            Pi Network Payment
+          </h2>
+          <p class="text-purple-400/70 text-sm mt-1">
+            Test transaction · <strong class="text-pi-gold">1.0 Test-Pi</strong> · Pi Browser required
+          </p>
+          <span id="pi-user-badge" class="hidden inline-block mt-2 text-xs px-3 py-1 rounded-full bg-pi-purple/20 text-pi-gold-light"></span>
+        </div>
+        <button type="button" id="pi-pay-test-btn" disabled
+          class="shimmer-btn animate-shimmer px-8 py-3.5 rounded-xl font-bold text-white shadow-lg shadow-purple-900/50 hover:scale-[1.02] active:scale-[0.98] transition-transform disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 whitespace-nowrap">
+          Pay 1 Test-Pi
+        </button>
+      </div>
+      <div id="pi-payment-status" class="hidden mt-4 rounded-xl px-4 py-3 text-sm border border-purple-500/30 bg-pi-dark/50 text-purple-300">
+        <span id="pi-payment-status-text">Initializing Pi SDK…</span>
+      </div>
+    </div>
+  </section>
 
   <!-- Accumulated Pool Hero -->
   <section class="relative z-10 max-w-4xl mx-auto px-4 mb-8">
@@ -273,7 +299,7 @@
 
       <section class="glass rounded-3xl p-6 sm:p-8">
         <h3 class="text-lg font-bold text-white mb-1">Claim the throne</h3>
-        <p class="text-purple-400/70 text-sm mb-5">Outbid the King. Your payment is split across pool, rewards &amp; platform fee.</p>
+        <p class="text-purple-400/70 text-sm mb-5">Enter your bid and pay via Pi Network to claim the throne.</p>
 
         <form id="claim-form" class="space-y-4">
           <div class="grid sm:grid-cols-2 gap-4">
@@ -297,8 +323,8 @@
                 <input type="number" id="bid-amount" min="1" step="0.01" placeholder="10"
                   class="w-full pl-10 pr-4 py-3 rounded-xl bg-pi-dark/80 border border-purple-500/30 text-white placeholder-purple-500/40 focus:outline-none focus:border-pi-purple focus:ring-2 focus:ring-pi-purple/30 transition [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none">
               </div>
-              <button type="submit" id="submit-btn"
-                class="shimmer-btn animate-shimmer px-6 sm:px-8 py-3 rounded-xl font-bold text-white text-sm sm:text-base shadow-lg shadow-purple-900/50 hover:scale-[1.02] active:scale-[0.98] transition-transform whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
+              <button type="submit" id="submit-btn" disabled
+                class="shimmer-btn animate-shimmer px-6 sm:px-8 py-3 rounded-xl font-bold text-white text-sm sm:text-base shadow-lg shadow-purple-900/50 hover:scale-[1.02] active:scale-[0.98] transition-transform whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100">
                 Claim Throne
               </button>
             </div>
@@ -346,9 +372,10 @@
   </main>
 
   <footer class="relative z-10 text-center pb-8 text-purple-500/40 text-xs">
-    Pi Pioneer Wall · Yield MVP · Simulated transactions
+    Pi Pioneer Wall · Yield MVP · Pi SDK payments enabled
   </footer>
 
+  <script src="pi-payment.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

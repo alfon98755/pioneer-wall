@@ -1,13 +1,15 @@
-// ─── Pi Network Payment Integration ───────────────────────────────────────────
-//
-// App ID  → Pi Developer Portal only (develop.pi). Linked to your domain.
-// API Key → Vercel env var PI_API_KEY (server-side in /api/payments/*). NEVER in this file.
+// ─── Pi Network Payment Integration (Testnet) ───────────────────────────────
+// App ID  → Pi Developer Portal (develop.pi) — linked to your domain, NOT in code.
+// API Key → Vercel env PI_API_KEY — server only (/api/payments/*).
 
+const LOG_PREFIX = '[PiPayment]';
 const PI_SCOPES = ['payments', 'username'];
 const TEST_PAYMENT_AMOUNT = 1.0;
+const USE_SANDBOX = true; // Testnet MVP — set false for Pi Mainnet production
 
 let piUser = null;
 let piReady = false;
+let piInitPromise = null;
 
 const payTestBtn = document.getElementById('pi-pay-test-btn');
 const claimBtn = document.getElementById('submit-btn');
@@ -16,12 +18,35 @@ const payStatusTextEl = document.getElementById('pi-payment-status-text');
 const piUserBadgeEl = document.getElementById('pi-user-badge');
 const userNameInput = document.getElementById('user-name');
 
+function log(step, data = {}) {
+  console.log(LOG_PREFIX, step, { ...data, ts: Date.now() });
+}
+
 function isPiBrowser() {
   return typeof window.Pi !== 'undefined';
 }
 
-function isPiSandboxHost() {
-  return window.location.hostname.includes('sandbox.minepi.com');
+function waitForPiSdk(maxMs = 8000) {
+  return new Promise((resolve, reject) => {
+    if (typeof window.Pi !== 'undefined') {
+      log('sdk_detected_immediate');
+      return resolve(window.Pi);
+    }
+
+    log('sdk_waiting', { maxMs });
+    const start = Date.now();
+    const timer = setInterval(() => {
+      if (typeof window.Pi !== 'undefined') {
+        clearInterval(timer);
+        log('sdk_detected_delayed', { waitedMs: Date.now() - start });
+        resolve(window.Pi);
+      } else if (Date.now() - start > maxMs) {
+        clearInterval(timer);
+        log('sdk_timeout', { waitedMs: Date.now() - start });
+        reject(new Error('Pi SDK script did not load. Open in Pi Browser.'));
+      }
+    }, 100);
+  });
 }
 
 function setPaymentStatus(type, message) {
@@ -38,9 +63,11 @@ function setPaymentStatus(type, message) {
   payStatusEl.className = `rounded-xl px-4 py-3 text-sm border transition-all ${styles[type] || styles.idle}`;
   payStatusTextEl.textContent = message;
   payStatusEl.classList.remove('hidden');
+  log('ui_status', { type, message });
 }
 
 function setPiButtonsEnabled(enabled) {
+  log('buttons_state', { enabled });
   if (payTestBtn) payTestBtn.disabled = !enabled;
   if (claimBtn) claimBtn.disabled = !enabled;
 }
@@ -54,21 +81,28 @@ function showPiUser(user) {
   if (userNameInput && !userNameInput.value.trim()) {
     userNameInput.value = user.username;
   }
+  log('user_authenticated', { username: user.username, uid: user.uid });
 }
 
 async function callBackend(path, body) {
+  log('backend_request', { path, bodyKeys: Object.keys(body || {}) });
+
   const response = await fetch(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 
+  const data = await response.json().catch(() => ({}));
+
+  log('backend_response', { path, status: response.status, ok: response.ok, data });
+
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.error || err.message || `Backend error ${response.status}`);
+    const msg = data.error || data.message || JSON.stringify(data.piResponse || data) || `HTTP ${response.status}`;
+    throw new Error(msg);
   }
 
-  return response.json();
+  return data;
 }
 
 async function approvePaymentOnServer(paymentId) {
@@ -80,14 +114,16 @@ async function completePaymentOnServer(paymentId, txid) {
 }
 
 function handleIncompletePayment(payment) {
+  log('incomplete_payment_found', { paymentId: payment?.identifier });
   setPaymentStatus('warning', 'Incomplete payment found — completing previous transaction…');
 
-  if (!payment?.identifier) return;
-
-  const txid = payment.transaction?.txid;
-  if (txid) {
+  const txid = payment?.transaction?.txid;
+  if (payment?.identifier && txid) {
     completePaymentOnServer(payment.identifier, txid)
-      .then(() => setPaymentStatus('success', 'Previous payment completed successfully.'))
+      .then(() => {
+        setPaymentStatus('success', 'Previous payment completed.');
+        if (window.GameState?.refresh) window.GameState.refresh();
+      })
       .catch((err) => setPaymentStatus('error', err.message));
   }
 }
@@ -98,6 +134,7 @@ async function authenticatePiUser() {
   }
 
   setPaymentStatus('loading', 'Authenticating with Pi Network…');
+  log('authenticate_start', { scopes: PI_SCOPES });
 
   const auth = await window.Pi.authenticate(PI_SCOPES, handleIncompletePayment);
   piUser = auth.user;
@@ -107,81 +144,120 @@ async function authenticatePiUser() {
 }
 
 async function initializePiSDK() {
-  if (!isPiBrowser()) {
-    setPaymentStatus('warning', 'Pi SDK not detected — open this app inside Pi Browser.');
-    setPiButtonsEnabled(false);
-    return;
-  }
+  if (piInitPromise) return piInitPromise;
 
-  try {
-    await window.Pi.init({
-      version: '2.0',
-      sandbox: isPiSandboxHost(),
+  piInitPromise = (async () => {
+    log('init_start', {
+      href: window.location.href,
+      userAgent: navigator.userAgent,
+      useSandbox: USE_SANDBOX,
     });
-    piReady = true;
-    setPaymentStatus('loading', 'Pi SDK ready. Authenticating…');
-    await authenticatePiUser();
-    setPiButtonsEnabled(true);
-  } catch (error) {
-    setPaymentStatus('error', `Pi init failed: ${error.message}`);
-    setPiButtonsEnabled(false);
-  }
+
+    try {
+      await waitForPiSdk();
+    } catch (error) {
+      setPaymentStatus('warning', error.message);
+      setPiButtonsEnabled(false);
+      throw error;
+    }
+
+    if (!isPiBrowser()) {
+      setPaymentStatus('warning', 'Pi SDK not detected — open inside Pi Browser.');
+      setPiButtonsEnabled(false);
+      return;
+    }
+
+    try {
+      log('pi_init_call', { version: '2.0', sandbox: USE_SANDBOX });
+      await window.Pi.init({ version: '2.0', sandbox: USE_SANDBOX });
+      piReady = true;
+      log('pi_init_success');
+      setPaymentStatus('loading', 'Pi SDK ready. Authenticating…');
+      await authenticatePiUser();
+      setPiButtonsEnabled(true);
+      setPaymentStatus('idle', 'Pi SDK ready. Payments enabled.');
+    } catch (error) {
+      log('pi_init_error', { message: error.message, stack: error.stack });
+      setPaymentStatus('error', `Pi init failed: ${error.message}`);
+      setPiButtonsEnabled(false);
+      throw error;
+    }
+  })();
+
+  return piInitPromise;
 }
 
-/**
- * Generic Pi payment flow — same approve/complete pipeline for all payments.
- * @returns {Promise<{ paymentId: string, txid: string, amount: number }>}
- */
 function createPiPayment({ amount, memo, metadata }) {
+  log('create_payment_called', { amount, memo, metadata });
+
   if (!piReady || !isPiBrowser()) {
-    return Promise.reject(new Error('Pi SDK is not ready. Use Pi Browser.'));
+    const err = new Error('Pi SDK is not ready. Wait for init or use Pi Browser.');
+    log('create_payment_blocked', { piReady, isPiBrowser: isPiBrowser() });
+    return Promise.reject(err);
   }
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const once = (fn) => (...args) => {
+      if (!settled) {
+        settled = true;
+        fn(...args);
+      }
+    };
+
     const paymentData = { amount, memo, metadata };
 
     const callbacks = {
       onReadyForServerApproval: async (paymentId) => {
-        setPaymentStatus('loading', `Payment ready (${paymentId.slice(0, 8)}…). Approving on server…`);
+        log('onReadyForServerApproval', { paymentId });
+        setPaymentStatus('loading', `Approving ${paymentId.slice(0, 8)}… on Vercel`);
         try {
           await approvePaymentOnServer(paymentId);
-          setPaymentStatus('loading', `Approved ${amount} Test-Pi. Confirm in Pi Wallet…`);
+          setPaymentStatus('loading', `Approved ${amount} π — confirm in Pi Wallet`);
         } catch (error) {
-          setPaymentStatus('error', `Approval failed: ${error.message}`);
-          reject(error);
+          log('approve_failed', { paymentId, error: error.message });
+          setPaymentStatus('error', `Approve failed: ${error.message}`);
+          once(reject)(error);
         }
       },
 
       onReadyForServerCompletion: async (paymentId, txid) => {
-        setPaymentStatus('loading', 'Transaction submitted. Completing on server…');
+        log('onReadyForServerCompletion', { paymentId, txid: txid?.slice(0, 12) });
+        setPaymentStatus('loading', 'Completing payment on server…');
         try {
-          await completePaymentOnServer(paymentId, txid);
-          setPaymentStatus(
-            'success',
-            `Payment successful! ${amount} Test-Pi confirmed. Tx: ${txid.slice(0, 12)}…`
-          );
-          resolve({ paymentId, txid, amount });
+          const result = await completePaymentOnServer(paymentId, txid);
+          setPaymentStatus('success', `Payment OK — ${amount} Test-Pi. Tx ${txid.slice(0, 12)}…`);
+          once(resolve)({ paymentId, txid, amount, result });
         } catch (error) {
-          setPaymentStatus('error', `Completion failed: ${error.message}`);
-          reject(error);
+          log('complete_failed', { paymentId, error: error.message });
+          setPaymentStatus('error', `Complete failed: ${error.message}`);
+          once(reject)(error);
         }
       },
 
       onCancel: (paymentId) => {
-        const id = paymentId ? ` (${paymentId.slice(0, 8)}…)` : '';
-        setPaymentStatus('warning', `Payment cancelled${id}.`);
-        reject(new Error('Payment cancelled by user'));
+        log('onCancel', { paymentId });
+        setPaymentStatus('warning', 'Payment cancelled.');
+        once(reject)(new Error('Payment cancelled by user'));
       },
 
       onError: (error, payment) => {
-        const detail = payment?.identifier ? ` [${payment.identifier.slice(0, 8)}…]` : '';
-        setPaymentStatus('error', `Payment error: ${error.message}${detail}`);
-        reject(error);
+        log('onError', { message: error?.message, paymentId: payment?.identifier });
+        setPaymentStatus('error', `Pi error: ${error.message}`);
+        once(reject)(error);
       },
     };
 
-    setPaymentStatus('loading', `Opening Pi payment for ${amount} Test-Pi…`);
-    window.Pi.createPayment(paymentData, callbacks);
+    setPaymentStatus('loading', `Opening Pi payment UI for ${amount} π…`);
+    log('pi_createPayment_invoke', paymentData);
+
+    try {
+      window.Pi.createPayment(paymentData, callbacks);
+      log('pi_createPayment_dispatched');
+    } catch (error) {
+      log('pi_createPayment_throw', { message: error.message });
+      reject(error);
+    }
   });
 }
 
@@ -198,23 +274,29 @@ window.PiPayments = {
   ensureAuthenticated: authenticatePiUser,
   createPayment: createPiPayment,
   setStatus: setPaymentStatus,
+  init: initializePiSDK,
 };
 
-if (payTestBtn) {
-  payTestBtn.addEventListener('click', () => {
-    const run = () =>
-      createTestPayment().catch((err) => {
-        if (err.message !== 'Payment cancelled by user') {
-          setPaymentStatus('error', err.message);
-        }
-      });
+function bindPayTestButton() {
+  if (!payTestBtn) {
+    log('pay_test_btn_missing');
+    return;
+  }
 
-    if (!piUser) {
-      authenticatePiUser().then(run).catch((err) => setPaymentStatus('error', err.message));
-      return;
+  payTestBtn.addEventListener('click', async () => {
+    log('pay_test_click');
+
+    try {
+      if (!piReady) await initializePiSDK();
+      if (!piUser) await authenticatePiUser();
+      await createTestPayment();
+    } catch (err) {
+      if (err.message !== 'Payment cancelled by user') {
+        setPaymentStatus('error', err.message);
+      }
     }
-    run();
   });
 }
 
-document.addEventListener('DOMContentLoaded', initializePiSDK);
+bindPayTestButton();
+initializePiSDK().catch(() => {});
